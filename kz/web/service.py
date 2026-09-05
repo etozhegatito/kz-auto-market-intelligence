@@ -218,6 +218,21 @@ def listing_warnings(
     when a listing resembles a bait ad and explain an unusual price upfront.
     """
     out = []
+
+    # Scope, not advice. Listings that state the vehicle does not run are
+    # excluded from training because their price answers a different question,
+    # measured at 163% MAPE against 21.6% for the corpus. Having narrowed the
+    # training scope, the service must say so when a description falls outside
+    # it — otherwise the estimate silently prices a working car that is not one.
+    from kz.transform.price_basis import looks_not_running
+
+    if looks_not_running(text):
+        out.append(
+            "The description suggests the vehicle does not run or is being "
+            "sold damaged. This estimate assumes a working vehicle of the "
+            "stated specification, so it does not apply here."
+        )
+
     if asking_price and fair > 0:
         ratio = asking_price / fair
         if ratio < 0.6:

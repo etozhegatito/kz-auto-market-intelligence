@@ -370,9 +370,16 @@ def main():
         df["description"]
     )
     customs = df.get("customs_cleared", pd.Series(index=df.index, dtype="object"))
+    # The condition badge participates because a listing the marketplace itself
+    # marks as damaged or non-running is priced as a wreck, not as a working
+    # vehicle of its specification. It reaches only enriched rows, so this is
+    # training hygiene rather than a feature; see price_basis.looks_not_running.
+    badge = df.get("page_status_badge", pd.Series(index=df.index, dtype="object"))
     df["price_basis"] = [
-        classify_price_basis(text, clearance, price)
-        for text, clearance, price in zip(df["text_full"], customs, df["price_tenge"])
+        classify_price_basis(text, clearance, price, status)
+        for text, clearance, price, status in zip(
+            df["text_full"], customs, df["price_tenge"], badge
+        )
     ]
 
     if Path(LABELS_CSV).exists():

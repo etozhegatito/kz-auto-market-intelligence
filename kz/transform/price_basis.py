@@ -16,10 +16,11 @@ PRICE_BASIS_VALUES = (
     "credit_price",
     "down_payment",
     "parts_price",
+    "not_running",
     "ambiguous",
 )
 NON_COMPARABLE_PRICE_BASES = frozenset(
-    {"cash_uncleared", "credit_price", "down_payment", "parts_price"}
+    {"cash_uncleared", "credit_price", "down_payment", "parts_price", "not_running"}
 )
 
 _AMOUNT = re.compile(
@@ -168,10 +169,90 @@ def _labelled_amounts(text: str) -> list[tuple[float, str]]:
     return out
 
 
+# Evidence that the listing is not a working vehicle of its specification.
+#
+# WHY THIS IS A TARGET QUESTION, NOT A FEATURE
+#
+# A car that does not run is priced as a wreck, so its price answers a
+# different question from the one the model is asked. Measured out-of-fold,
+# these listings carry 163% MAPE against 21.6% for the corpus, and the miss is
+# almost entirely upward: the model reads an ordinary specification and prices
+# an ordinary car.
+#
+# WHAT IS DELIBERATELY NOT INCLUDED
+#
+# "После ДТП" is excluded from this rule even though it names an accident.
+# Those 88 listings score 18.7% MAPE with +5.6% bias — better than the corpus
+# average — because a repaired car is an ordinary car and its seller has
+# already priced the history in. Dropping them would remove easy rows and
+# flatter the metric while hiding nothing, which is the difference between
+# cleaning a target and gaming a number.
+#
+# Negation reuses the damage module's window rather than a second
+# implementation, so "не аварийная" does not become evidence of a wreck.
+# Deliberately narrow, and narrowed again after adversarial checks.
+#
+# "на запчасти" was dropped: it fires on "денег на запчасти не жалели", which
+# describes a well-maintained car, and on "есть комплект на запчасти в
+# подарок". Genuine shells are already caught by the missing-powertrain rule,
+# and the phrase only added six rows against a large false-positive surface.
+#
+# "аварийная" needs its noun, because "аварийная сигнализация" is a hazard
+# warning light present on every car. The same section-34 lesson: prefer a
+# missed wreck to a healthy car thrown out of training.
+_NOT_RUNNING_PHRASES = (
+    "не на ходу",
+    "не заводится",
+    "не заводиться",
+    "не ездит",
+)
+_NOT_RUNNING_PATTERNS = (
+    # "аварийная машина", "аварийное состояние", "аварийная, стоит в гараже" —
+    # but never "аварийная сигнализация" or "аварийной ситуации".
+    r"аварийн(?:ая|ое|ый)(?!\s*(?:сигнализ|ситуац|кнопк|лампоч|знак))",
+)
+
+# The marketplace's own condition badge. Present only for enriched listings,
+# which is why this remains training hygiene rather than a model feature: at
+# 12.8% enrichment coverage most wrecks in the corpus carry no badge at all.
+_NOT_RUNNING_BADGES = ("аварийная", "не на ходу")
+
+
+def looks_not_running(text: object = None, status_badge: object = None) -> bool:
+    """True when explicit evidence says the vehicle does not run.
+
+    Both arguments are optional because the two sources have very different
+    coverage: text exists for every row, the badge only for enriched ones.
+    """
+    badge = str(status_badge or "").lower()
+    if any(token in badge for token in _NOT_RUNNING_BADGES):
+        return True
+
+    from kz.transform.damage import _NEG_AFTER, _NEG_BEFORE, _TOKEN
+
+    source = str(text or "").lower().replace("\u00a0", " ")
+    candidates = [re.escape(p) for p in _NOT_RUNNING_PHRASES]
+    candidates += list(_NOT_RUNNING_PATTERNS)
+    for pattern in candidates:
+        for match in re.finditer(pattern, source):
+            phrase = match.group(0)
+            # "не на ходу" and "не заводится" carry their own negation; the
+            # window would otherwise reject the very phrases it should catch.
+            if not phrase.startswith("не "):
+                before = _TOKEN.findall(source[: match.start()])[-2:]
+                if any(word in _NEG_BEFORE for word in before):
+                    continue
+            if _NEG_AFTER.match(source[match.end():]):
+                continue
+            return True
+    return False
+
+
 def classify_price_basis(
     text: object,
     customs_cleared: object = None,
     listing_price: object = None,
+    status_badge: object = None,
 ) -> str:
     """Return the strongest supported interpretation of the listing price."""
     source = str(text or "").lower().replace("\u00a0", " ")
@@ -180,6 +261,11 @@ def classify_price_basis(
     missing_gearbox = bool(_MISSING_GEARBOX.search(source))
     if (missing_engine and missing_gearbox) or _SHARED_ABSENCE.search(source):
         return "parts_price"
+
+    # Checked after parts_price: a shell missing both assemblies is the more
+    # specific statement, and both exclusions have the same effect anyway.
+    if looks_not_running(text, status_badge):
+        return "not_running"
 
     try:
         target = float(listing_price)

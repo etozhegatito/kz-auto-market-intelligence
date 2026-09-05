@@ -481,3 +481,177 @@ included in the image.
 11. Classify what a displayed price means before treating it as a regression target.
 12. Freeze a human-review cohort before any rule that can change its membership.
 13. Test the packaged product contract; local artifact availability is not deployment proof.
+
+---
+
+## 36. Fresh listings do not help, and the cheap segment is a tail problem
+
+Two questions were asked together: whether collecting fresher listings
+improves MAPE, and how the below-5M segment could actually be reduced.
+
+### The market did not move, so recency buys nothing
+
+Median basket price fell from 7.8M to 6.3M across the collection window,
+which looks like a falling market until composition is held fixed. Within
+make + model + year groups of at least eight cars, relative price stayed at
+1.000 every week from mid-July to early September. The fitted trend is
+-0.1% per month.
+
+| week | comparable rows | relative price |
+|---|---:|---:|
+| 13 Jul | 1187 | 1.000 |
+| 20 Jul | 252 | 1.000 |
+| 27 Jul | 95 | 1.013 |
+| 3 Aug | 156 | 1.000 |
+| 24 Aug | 2480 | 1.000 |
+| 31 Aug | 229 | 1.000 |
+
+A model trained on July data therefore does not misprice September
+listings, and "collect fresher cards" is not a MAPE lever. It remains
+useful for anomaly review and for photo supply. The window is only seven
+weeks, so this says nothing about a year.
+
+### The apparent bias in the cheap segment is mostly how the segment is cut
+
+Segmenting by actual price selects, by construction, the cars the model
+priced above their asking price: a low actual price *is* the definition of
+over-prediction. The same mechanism already explained the interval tail
+skew in section 10.
+
+| segment definition | rows | MAPE | mean bias | median bias |
+|---|---:|---:|---:|---:|
+| actual price below 5M | 5043 | 29.83% | +12.45% | +3.23% |
+| predicted price below 5M | 5119 | 28.78% | +7.33% | -1.45% |
+
+Age carries no such trap, because it is known before the prediction:
+
+| age | rows | MAPE | mean bias | median bias |
+|---|---:|---:|---:|---:|
+| 0-10 | 4982 | 16.47% | +2.23% | -0.45% |
+| 10-20 | 3408 | 18.99% | +3.60% | -1.44% |
+| 20-30 | 2503 | 24.78% | +5.64% | -1.27% |
+| 30+ | 1746 | 37.12% | +11.13% | -0.52% |
+
+**Median bias is approximately zero in every age band.** The model is not
+systematically optimistic about old cars. The rising mean comes entirely
+from a right tail of listings priced far below what their specification
+implies.
+
+### The error is a tail, and part of the tail is already identifiable
+
+Within the cheap segment the worst 1% of rows carry 9.2% of segment error,
+the worst 10% carry 38.9%, and the worst 25% carry 62.8%. Tabular fields do
+not separate the bad quartile from the rest: missing mileage, photo count,
+VIP status, and description length are all indistinguishable.
+
+What does separate them is evidence that the car is not an ordinary car:
+
+| subgroup | rows | MAPE | mean bias |
+|---|---:|---:|---:|
+| accident / non-running badge | 32 | **168.3%** | +166.6% |
+| explicit damage keywords | 80 | 36.7% | +27.6% |
+| "negotiable" or "urgent" in text | 525 | 34.0% | +22.1% |
+| weld / rot / rust wording | 35 | 35.1% | +15.8% |
+| seller says painted or hit | 37 | 23.0% | **-0.8%** |
+
+The last row is the interesting one. When a seller states the car was hit
+or repainted, the model is unbiased — those sellers price honestly and the
+listing is otherwise ordinary. The damage is disclosed and already in the
+price.
+
+### What follows
+
+Chasing "cheap-segment MAPE" as a single number is the wrong framing. Half
+of it is metric arithmetic (section 21), the apparent bias is largely how
+the segment is cut, and the median listing is priced correctly. The
+remaining, real problem is a minority of listings whose price reflects
+something other than a working car of that specification.
+
+Two of those causes are already handled or identifiable without any vision
+work: shells missing engine and gearbox (`parts_price`, section 34) and
+listings the marketplace itself flags as damaged or non-running. The badge
+comes from enrichment and covers 12.8% of rows, so it is training-data
+hygiene rather than a feature — the same coverage trap as section 17.
+
+The honest target is therefore not "reduce 29% to 20.5%" but "identify the
+tail". A metric that improves because a shell listing left the training set
+is a real improvement; a metric that improves because the segment boundary
+moved is not.
+
+---
+
+## 37. Excluding wrecks moves the headline, not the model
+
+The below-5M tail contains listings whose price is not the price of a working
+vehicle. Section 34 already removed shells missing both engine and gearbox.
+This adds vehicles the listing or the marketplace states do not run.
+
+Measured out-of-fold before any change:
+
+| evidence | rows | MAPE | mean bias |
+|---|---:|---:|---:|
+| marketplace badge "Аварийная/Не на ходу" | 33 | **163.2%** | +161.6% |
+| text: does not run / will not start / does not drive | 15 | 90.8% | +82.9% |
+| text: аварийн | 11 | 52.0% | +48.6% |
+| text: после ДТП | 88 | **18.7%** | +5.6% |
+| whole corpus | 12639 | 21.6% | +4.5% |
+
+### What is excluded and what is not
+
+"После ДТП" is **not** excluded. Those listings score better than the corpus
+average with almost no bias, because a repaired car is an ordinary car and
+its seller has already priced the history in. Removing them would delete easy
+rows and flatter the metric while hiding nothing — the difference between
+cleaning a target and gaming a number.
+
+Two patterns were dropped after adversarial checks rather than shipped:
+
+* `на запчасти` fires on "денег на запчасти не жалели", which describes a
+  well-maintained car, and on "есть комплект на запчасти в подарок". It
+  added six rows against a wide false-positive surface, and genuine shells
+  are already caught by the powertrain rule.
+* `аварийная` needs its noun. Unqualified, it matches "аварийная
+  сигнализация" — a hazard light fitted to every car.
+
+Both errors point the same way as section 34's false positive: prefer a
+missed wreck to a healthy car thrown out of training.
+
+### The effect, split so it cannot be misread
+
+Removing rows from **evaluation** is a cohort change: the metric falls
+because harder cases stopped being measured. Removing them from **training**
+is a model change. Reporting the sum as an improvement would be dishonest,
+so both are measured separately on identical rows.
+
+| what is measured | MAPE |
+|---|---:|
+| A. current: all rows in training and evaluation | 21.648% |
+| A. same predictions, non-running rows dropped from evaluation only | 21.207% |
+| B. non-running rows also dropped from training, same evaluation rows | 21.184% |
+
+```
+cohort change   -0.441 points   ← not a model improvement
+model effect    -0.024 points   95% CI [-0.140, +0.091]
+```
+
+The model barely moved. Forty-nine rows out of 12,639 cannot change what a
+gradient-boosted model has learned, and the confidence interval crosses zero.
+
+**The honest statement is therefore: the exclusion is correct target hygiene
+and the headline MAPE falls by roughly 0.44 points because the question
+changed, not because the answer improved.**
+
+### Why the cleaned number is still not "the real MAPE"
+
+The badge exists only for enriched rows, currently 12.8% of the corpus. Forty
+-three badged wrecks at that coverage imply a few hundred in total, of which
+this rule identifies well under a quarter. What remains is a partially
+cleaned set, not a clean one.
+
+### Scope has to hold at serving time too
+
+Narrowing training scope obliges the service to admit the boundary, so
+`/estimate` now warns when a description states the vehicle does not run and
+says the estimate does not apply. Without it the form would quietly price a
+wreck as a working car — the same train/serve mismatch that let the public
+image substitute a fixed price range for a calibrated one (section 35).

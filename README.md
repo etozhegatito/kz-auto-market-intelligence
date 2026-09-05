@@ -19,8 +19,8 @@ market-anomaly review, and experimental visual-condition analysis.
 | What problem does it solve? | Estimates a fair *listing* price for a used car in Almaty and sends unusually low listings to human review. |
 | What is deployed? | A read-only estimator backed by two trained CatBoost models. It does not need the source database for inference. |
 | How much data? | 12,799 collected listings; 12,639 rows used by the current model. |
-| Main result | **21.48% grouped out-of-fold MAPE**, 13.88% median APE, 22.99% out-of-time MAPE. |
-| Where is the remaining error? | Cars below ₸5M: 29.22% MAPE and 55.7% of total percentage error. Cars at ₸5M+: 16.13% MAPE. |
+| Main result | **21.16% grouped out-of-fold MAPE**, 13.88% median APE, 22.01% out-of-time MAPE, scoped to working vehicles. |
+| Where is the remaining error? | Cars below ₸5M: 28.60% MAPE. Cars at ₸5M+: 16.06% MAPE. |
 | Is computer vision in production? | No. Earlier supervised CV results were withdrawn after label-definition drift was found. The live price estimate does not claim to inspect photos. |
 | Engineering quality | 281 offline tests plus 6 PostgreSQL integration tests, Ruff, Docker health smoke, and GitHub Actions. |
 
@@ -103,26 +103,45 @@ validation MAPE, and whether public-demo safeguards are active.
 These numbers come from the model trained on 5 September 2026. They are based
 on saved out-of-fold predictions, not predictions on training rows.
 
+**The evaluated population changed with this model.** Listings stating that
+the vehicle does not run, and shells missing both engine and gearbox, are now
+excluded: their price answers a different question from the one the model is
+asked, and they scored 163% MAPE against 21.6% for the corpus. Removing 49
+such rows lowered the headline by 0.44 points, but the model itself moved
+only 0.02 points with a confidence interval crossing zero. **The figure fell
+because the question narrowed, not because the answer improved.** Comparisons
+with earlier numbers on this page are therefore comparisons across different
+cohorts. Details in [FINDINGS section 37](docs/FINDINGS.md).
+
+Note also what is *not* excluded: 88 listings mentioning a past accident stay
+in, because they score 18.7% with almost no bias. A repaired car is an
+ordinary car, and dropping those rows would flatter the metric while hiding
+nothing.
+
 | Validation view | MAPE | Median APE | Notes |
 |---|---:|---:|---|
-| Grouped OOF, routed model | **21.48%** | **13.88%** | Primary model-selection estimate |
-| Grouped OOF, general model only | 21.62% | 14.02% | General model before specialist routing |
-| Grouped OOF, simple baseline | 30.49% | 14.16% | Median by make + model + year |
-| Out-of-time, routed model | **22.99%** | 14.41% | Later listings held out by time |
-| Out-of-time, baseline | 34.31% | 15.00% | Same temporal holdout |
+| Grouped OOF, routed model | **21.16%** | **13.88%** | Primary model-selection estimate |
+| Grouped OOF, general model only | 21.24% | 13.91% | General model before specialist routing |
+| Grouped OOF, simple baseline | 29.66% | 14.25% | Median by make + model + year |
+| Out-of-time, routed model | **22.01%** | 14.41% | Later listings held out by time |
+| Out-of-time, baseline | 31.59% | 14.90% | Same temporal holdout |
 
-The routed model's grouped MAPE has a 95% grouped-bootstrap interval of
-**20.99%–22.02%**. Its change versus the general model is -0.13 percentage
-points, with a paired 95% interval of **-0.29 to +0.02** points. Both this
-interval and the out-of-time paired interval cross zero, so specialist routing
-remains an experimental rather than proven improvement.
+Specialist routing changes grouped MAPE by -0.08 percentage points against
+the general model, with a paired 95% interval of **-0.23 to +0.07**. The
+out-of-time delta is -0.13 points with an interval of **-0.53 to +0.25**.
+Both cross zero, so routing remains experimental rather than proven.
+
+Retraining twice on identical data — same fingerprint, same code hash —
+produced grouped MAPE within 0.02 points but out-of-time MAPE 0.57 points
+apart. Any out-of-time claim smaller than roughly half a point is therefore
+not distinguishable from a repeated run.
 
 ### Error by price
 
 | Actual listing price | Rows | MAPE | Share of total percentage error |
 |---|---:|---:|---:|
-| Below ₸5M | 5,173 | **29.22%** | **55.7%** |
-| ₸5M and above | 7,466 | **16.13%** | 44.3% |
+| Below ₸5M | 5,126 | **28.60%** | 55.0% |
+| ₸5M and above | 7,464 | **16.05%** | 45.0% |
 
 The 18% overall MAPE target is a research gate, not a promise. If the stronger
 segment remains unchanged, the below-₸5M segment must improve to roughly
@@ -134,13 +153,13 @@ inexpensive cars.
 
 | Vehicle age | Rows | MAPE |
 |---|---:|---:|
-| 0–5 years | 3,382 | 16.91% |
-| 6–10 years | 1,600 | 15.91% |
-| 11–20 years | 3,408 | 18.60% |
-| 21+ years | 4,249 | **29.54%** |
+| 0–5 years | 3,378 | 16.79% |
+| 6–10 years | 1,596 | 15.08% |
+| 11–20 years | 3,392 | 18.37% |
+| 21+ years | 4,224 | **29.43%** |
 
-The sharpest intersection is **21+ years and below ₸5M**: 3,584 rows, 31.00%
-MAPE, and 40.9% of all percentage error. The roadmap therefore prioritizes
+The sharpest intersection is **21+ years and below ₸5M**: 3,495 rows, 31.19%
+MAPE, and 40.8% of all percentage error. The roadmap therefore prioritizes
 condition evidence instead of treating every car older than five years as a
 single difficult class.
 

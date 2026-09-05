@@ -14,7 +14,10 @@ price, or guarantee that a vehicle will sell inside the displayed range.
 
 - Source market: kolesa.kz listings scoped to Almaty.
 - Collected listings: 12,799.
-- Rows used by the current trained artifact: 12,639.
+- Rows used by the current trained artifact: 12,590.
+- Excluded as out of scope: 57 listings stating the vehicle does not run
+  and 5 shells missing both engine and gearbox. Their price answers a
+  different question; see FINDINGS 37.
 - Target: first observed listing price in KZT.
 - Target cleaning: explicit uncleared-cash, credit-price, down-payment, and
   missing-engine-and-gearbox parts prices are excluded; ambiguous rows are retained.
@@ -53,16 +56,18 @@ Measured on the 5 September 2026 artifact:
 
 | Validation view | MAPE | Median APE | R-squared on log price |
 |---|---:|---:|---:|
-| Grouped OOF, routed | **21.48%** | **13.88%** | **0.935** |
-| Grouped OOF, general only | 21.62% | 14.02% | 0.935 |
-| Grouped OOF, make/model/year baseline | 30.49% | 14.16% | 0.850 |
-| Out-of-time, routed | **22.99%** | 14.41% | 0.929 |
-| Out-of-time, baseline | 34.31% | 15.00% | 0.841 |
+| Grouped OOF, routed | **21.16%** | **13.88%** | **0.936** |
+| Grouped OOF, general only | 21.24% | 13.91% | 0.936 |
+| Grouped OOF, make/model/year baseline | 29.66% | 14.25% | 0.855 |
+| Out-of-time, routed | **22.01%** | 14.41% | 0.931 |
+| Out-of-time, baseline | 31.59% | 14.90% | 0.845 |
 
 Grouped bootstrap for routed MAPE:
 
 - standard deviation: about 0.26 percentage points;
-- 95% interval: **20.99%–22.02%**.
+- 95% interval: **20.99%–22.02%** on the previous cohort; the current
+  artifact excludes non-running listings, so figures before and after that
+  change describe different populations and must not be differenced.
 
 The routed model changes grouped MAPE versus the general model by -0.13
 percentage points. Its paired 95% interval is -0.29 to +0.02 points, and the
@@ -73,14 +78,14 @@ rather than a statistically supported improvement claim.
 
 | Segment | Rows | MAPE |
 |---|---:|---:|
-| Price below 5M tenge | 5,173 | **29.22%** |
-| Price at least 5M tenge | 7,466 | **16.13%** |
-| Age 0–5 years | 3,382 | 16.91% |
-| Age 6–10 years | 1,600 | 15.91% |
-| Age 11–20 years | 3,408 | 18.60% |
-| Age 21+ years | 4,249 | **29.54%** |
+| Price below 5M tenge | 5,126 | **28.60%** |
+| Price at least 5M tenge | 7,464 | **16.05%** |
+| Age 0–5 years | 3,378 | 16.79% |
+| Age 6–10 years | 1,596 | 15.08% |
+| Age 11–20 years | 3,392 | 18.37% |
+| Age 21+ years | 4,224 | **29.43%** |
 
-The intersection age 21+ and price below 5M contains 3,584 rows, has 31.00%
+The intersection age 21+ and price below 5M contains 3,495 rows, has 31.19%
 MAPE, and creates approximately 40.9% of all percentage error. Performance
 claims should therefore always include segment metrics.
 

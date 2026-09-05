@@ -205,11 +205,14 @@ def test_price_basis_rejects_only_explicit_missing_powertrain_shells():
     assert classify_price_basis("Без двигателя, коробка работает", "Да", 900_000) == (
         "cash_customs_cleared"
     )
+    # Reclassified deliberately: the listing states the car does not run, so
+    # its price is not the price of a working vehicle. The powertrain rule
+    # still declines it, which is what this test is about.
     assert (
         classify_price_basis(
             "Не на ходу, подойдет на запчасти или под восстановление", "Да", 350_000
         )
-        == "cash_customs_cleared"
+        == "not_running"
     )
     assert classify_price_basis("Денег на запчасти не жалели", "Да", 6_000_000) == (
         "cash_customs_cleared"
@@ -4684,3 +4687,62 @@ def test_photo_intake_degrades_instead_of_failing_without_the_image_stack(monkey
 
     assert report.frames and report.frames[0].width is None
     assert report.unavailable, "an absent capability must be stated, not hidden"
+
+
+def test_non_running_listings_leave_training_but_not_measurement():
+    """Excluding a wreck is target hygiene; hiding it would be gaming.
+
+    A car that does not run is priced as a wreck, so its price answers a
+    different question from the one the model is asked — measured at 163%
+    MAPE against 21.6% for the corpus, almost entirely over-predicted.
+
+    The rule stays narrow on purpose. "После ДТП" names an accident yet
+    scores 18.7% MAPE with +5.6% bias, better than the corpus average,
+    because a repaired car is an ordinary car whose seller already priced the
+    history in. Dropping those rows would remove easy cases and flatter the
+    metric while hiding nothing.
+    """
+    from kz.transform.price_basis import (
+        classify_price_basis,
+        is_training_eligible,
+        looks_not_running,
+    )
+
+    for text in ("машина не на ходу", "не заводится, стоит в гараже",
+                 "аварийная, после удара", "аварийное состояние кузова"):
+        assert looks_not_running(text), text
+        assert not is_training_eligible(classify_price_basis(text, None, 500_000))
+
+    # Adversarial cases that an earlier draft of this rule got wrong. Both
+    # would have thrown a healthy car out of training, which is the expensive
+    # direction of the two.
+    for text in ("Денег на запчасти не жалели", "есть комплект на запчасти в подарок",
+                 "аварийная сигнализация работает", "аварийная кнопка на панели",
+                 "в аварийной ситуации помогает"):
+        assert not looks_not_running(text), text
+
+    for text in ("после ДТП восстановлен полностью", "не аварийная, всё родное",
+                 "обычная машина, один хозяин"):
+        assert not looks_not_running(text), text
+        assert is_training_eligible(classify_price_basis(text, None, 5_000_000))
+
+    assert looks_not_running("", "Аварийная/Не на ходу")
+    assert not looks_not_running("", "-")
+
+
+def test_estimate_says_when_a_listing_is_outside_its_scope():
+    """Narrowing training scope obliges the service to admit the boundary.
+
+    Training now excludes vehicles that do not run. Without a matching notice
+    the form would quietly price a wreck as a working car — the same
+    train/serve mismatch that let the public image substitute a fixed price
+    range for a calibrated one.
+    """
+    from kz.web.service import listing_warnings
+
+    car = {"brand": "Toyota", "model": "Camry", "age": 10}
+    wreck = listing_warnings(car, None, 5_000_000, text="не на ходу, после ДТП")
+    assert any("does not run" in w for w in wreck), wreck
+
+    ordinary = listing_warnings(car, None, 5_000_000, text="один хозяин, обслужен")
+    assert not any("does not run" in w for w in ordinary), ordinary
