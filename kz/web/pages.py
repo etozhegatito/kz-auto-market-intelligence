@@ -155,7 +155,9 @@ def estimate_page() -> str:
   <h2 style="margin-top:0">Check your photos</h2>
   <p class="muted">Upload the frames you plan to publish. The service reports
   what can be verified by looking at them: unreadable files, duplicates,
-  frames too small to show damage, and frames that do not show the body.</p>
+  frames too small, too blurry or too dark to show damage, and frames that do
+  not show the body. Sharpness and exposure are compared against the 5th
+  percentile of collected listing photos.</p>
   <div class="note info">
     <b>Photos do not change the estimate.</b> This project has no validated
     model that reads vehicle condition from an image — the supervised results
@@ -204,6 +206,8 @@ async function checkPhotos(){
       if (!f.ok) flags.push(esc(f.error || 'unreadable'));
       if (f.duplicate_of) flags.push('same as ' + esc(f.duplicate_of));
       if (f.too_small) flags.push('too small for damage');
+      if (f.blurry) flags.push('less sharp than 95% of listings');
+      if (f.too_dark) flags.push('darker than 95% of listings');
       if (f.shows_bodywork === false) flags.push('no bodywork visible');
       h += '<tr><td>' + esc(f.name) + '</td><td>'
          + Math.round(f.bytes/1024) + ' KB</td><td>'

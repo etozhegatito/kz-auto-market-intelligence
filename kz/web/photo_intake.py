@@ -22,6 +22,7 @@ picture:
   * pixel size, and which frames are too small to show damage;
   * exact duplicates by content hash, and near duplicates by perceptual hash
     where imagehash is installed;
+  * frames blurrier or darker than almost every listing photo in the corpus;
   * whether the frame shows vehicle bodywork at all.
 
 The last one is the only learned signal used, and it is the only photo axis
@@ -66,6 +67,24 @@ MIN_USEFUL_PIXELS = 400 * 300
 # seller sees the same notion of "duplicate" the pipeline uses.
 PHASH_NEAR_DISTANCE = 5
 
+# Sharpness and exposure thresholds, taken from the 5th percentile of 600
+# collected listing photos rather than chosen as round numbers. A frame below
+# either one is worse than roughly 95% of what buyers already scroll past,
+# which is a statement about this corpus and not a universal standard.
+#
+# Both are deterministic image statistics, so "this photo is blurry" can be
+# checked by looking at it. That is the whole reason they are here: no
+# validated model reads condition from a photograph in this project, but
+# nobody needs a model to see that a picture is out of focus.
+BLUR_VARIANCE = 400.0
+DARK_MEAN_LEVEL = 79.0
+
+# Sharpness is measured after scaling the long side to this, because Laplacian
+# variance depends on resolution: a 4000-pixel phone upload and a 768-pixel
+# collected frame are otherwise not comparable, and the thresholds were
+# calibrated at this size.
+QUALITY_LONG_SIDE = 768
+
 # Upload guard rails. These are not security boundaries; they keep a mistaken
 # drag-and-drop of a photo library from occupying the process.
 MAX_FILES = 20
@@ -82,6 +101,8 @@ class FrameReport:
     width: int | None = None
     height: int | None = None
     too_small: bool = False
+    blurry: bool = False
+    too_dark: bool = False
     duplicate_of: str | None = None
     shows_bodywork: bool | None = None
     error: str | None = None
@@ -100,6 +121,37 @@ class IntakeReport:
             "unavailable": self.unavailable,
             "notes": self.notes,
         }
+
+
+def _image_quality(image) -> tuple[bool, bool] | None:
+    """Return (blurry, too_dark), or None when numpy is unavailable.
+
+    Laplacian variance is the standard focus measure: a sharp edge produces
+    large second derivatives, a blurred one does not.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+
+    grey = image.convert("L")
+    width, height = grey.size
+    scale = QUALITY_LONG_SIDE / max(width, height)
+    if scale < 1:
+        grey = grey.resize((max(1, int(width * scale)), max(1, int(height * scale))))
+    array = np.asarray(grey, dtype=np.float32)
+    if min(array.shape) < 3:
+        return None
+    laplacian = (
+        array[:-2, 1:-1] + array[1:-1, :-2] - 4 * array[1:-1, 1:-1]
+        + array[1:-1, 2:] + array[2:, 1:-1]
+    )
+    dark = bool(array.mean() < DARK_MEAN_LEVEL)
+    # Darkening compresses contrast, so an underexposed frame reads as blurred
+    # whether or not it is. Reporting both would tell the seller to fix two
+    # problems when there is one, so darkness wins and blur is left unclaimed.
+    blurry = bool(laplacian.var() < BLUR_VARIANCE) and not dark
+    return blurry, dark
 
 
 def _pillow():
@@ -246,6 +298,10 @@ def analyse(files: list[tuple[str, bytes]]) -> IntakeReport:
                         "still detected by content hash."
                     )
 
+        quality = _image_quality(image)
+        if quality is not None:
+            frame.blurry, frame.too_dark = quality
+
         if body_score is not None:
             try:
                 frame.shows_bodywork = body_score(image)
@@ -273,6 +329,20 @@ def _summarise(frames: list[FrameReport]) -> list[str]:
         notes.append(
             f"{len(duplicates)} frames repeat an earlier photo. "
             "Buyers see fewer distinct views than the count suggests."
+        )
+
+    blurry = [f for f in usable if f.blurry]
+    if blurry:
+        notes.append(
+            f"{len(blurry)} frames are less sharp than about 95% of listing "
+            "photos. Buyers cannot judge condition from an out-of-focus frame."
+        )
+
+    dark = [f for f in usable if f.too_dark]
+    if dark:
+        notes.append(
+            f"{len(dark)} frames are darker than about 95% of listing photos. "
+            "Daylight or a brighter location would show more."
         )
 
     small = [f for f in usable if f.too_small]

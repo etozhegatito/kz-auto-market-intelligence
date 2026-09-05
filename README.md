@@ -318,8 +318,15 @@ ourselves: the model was trained on listings that carry photographs while the
 form accepted tabular fields only.
 
 It reports only what a person can verify by looking at the picture — files
-that are not readable images, duplicates, frames too small to show panel
-damage, and frames that show no bodywork at all. The bodywork axis is the
+that are not readable images, duplicates, frames too small, too blurry or too
+dark to show panel damage, and frames that show no bodywork at all.
+
+Sharpness and exposure are deterministic image statistics compared against
+the 5th percentile of 600 collected listing photos, measured after scaling to
+a common long side because Laplacian variance depends on resolution. A frame
+below either threshold is worse than roughly 95% of what buyers already
+scroll past. Underexposure suppresses the blur claim, because darkening
+compresses contrast and would otherwise report one problem twice. The bodywork axis is the
 single photo signal validated against this project's own labels, at 0.986
 ROC-AUC over 117 frames a reviewer marked as cabin, engine bay, wheel, or
 paperwork. It answers "is the car body visible", never "is the car damaged".

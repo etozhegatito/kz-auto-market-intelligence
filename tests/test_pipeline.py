@@ -4620,9 +4620,14 @@ def test_photo_intake_never_reports_anything_about_price():
     # would still miss a field named "condition_score". Freezing the frame
     # schema means a future numeric verdict cannot appear without a test
     # failing and someone having to justify it.
+    # "blurry" and "too_dark" were added deliberately and are listed here to
+    # justify them: both are deterministic image statistics a person can
+    # verify by looking, not judgements about the vehicle. Anything that
+    # scores condition must clear the FINDINGS gate before it appears here.
     assert set(vars(report.frames[0])) == {
         "name", "ok", "bytes", "width", "height",
-        "too_small", "duplicate_of", "shows_bodywork", "error",
+        "too_small", "blurry", "too_dark",
+        "duplicate_of", "shows_bodywork", "error",
     }, "photo intake grew a field; anything scoring condition needs FINDINGS gate 4 first"
 
     for frame in payload["frames"]:
@@ -4746,3 +4751,47 @@ def test_estimate_says_when_a_listing_is_outside_its_scope():
 
     ordinary = listing_warnings(car, None, 5_000_000, text="один хозяин, обслужен")
     assert not any("does not run" in w for w in ordinary), ordinary
+
+
+def test_photo_intake_separates_darkness_from_blur():
+    """Underexposure must not be reported as two problems.
+
+    Darkening compresses contrast, so an underexposed frame produces low
+    Laplacian variance whether or not it is actually out of focus. Reporting
+    both would tell a seller to fix two things when there is one.
+
+    Thresholds come from the 5th percentile of 600 collected listing photos,
+    measured after scaling to a common long side because the statistic
+    depends on resolution.
+    """
+    import io
+
+    from PIL import Image, ImageFilter
+
+    from kz.web import photo_intake
+
+    sharp = Image.open(io.BytesIO(_synthetic_png(768, 576, 11)))
+    crisp = io.BytesIO()
+    sharp.save(crisp, "PNG")
+
+    blurred = io.BytesIO()
+    sharp.filter(ImageFilter.GaussianBlur(6)).save(blurred, "PNG")
+
+    dark = io.BytesIO()
+    Image.eval(sharp.filter(ImageFilter.GaussianBlur(6)), lambda v: v // 5).save(dark, "PNG")
+
+    frames = {
+        f.name: f
+        for f in photo_intake.analyse(
+            [("crisp.png", crisp.getvalue()),
+             ("blurred.png", blurred.getvalue()),
+             ("dark.png", dark.getvalue())]
+        ).frames
+    }
+
+    assert frames["crisp.png"].blurry is False
+    assert frames["blurred.png"].blurry is True
+    assert frames["dark.png"].too_dark is True
+    assert frames["dark.png"].blurry is False, (
+        "a dark frame must not also be blamed for being soft"
+    )
